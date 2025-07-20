@@ -1,4 +1,4 @@
-import { Calendar, User, ChevronDown } from "lucide-react";
+import { Calendar, User, ChevronDown, Trash2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ interface Task {
 interface TaskCardProps {
   task: Task;
   onStatusChange: (taskId: string, newStatus: Task['status']) => void;
+  onDeleteTask: (taskId: string) => void;
   className?: string;
 }
 
@@ -72,7 +73,7 @@ const formatDate = (dateString: string) => {
   });
 };
 
-export const TaskCard = ({ task, onStatusChange, className }: TaskCardProps) => {
+export const TaskCard = ({ task, onStatusChange, onDeleteTask, className }: TaskCardProps) => {
   const statusDisplay = getStatusDisplay(task.status);
   const isOverdue = new Date(task.dueDate) < new Date() && task.status !== 'done';
 
@@ -147,6 +148,14 @@ export const TaskCard = ({ task, onStatusChange, className }: TaskCardProps) => 
             <Badge variant="secondary" className="text-xs">
               {task.team}
             </Badge>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onDeleteTask(task.id)}
+              className="ml-2 h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
           </div>
         </div>
       </CardContent>

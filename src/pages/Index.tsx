@@ -1,13 +1,26 @@
-import { useState } from "react";
-import { Plus, Filter, Search, Calendar, Users, CheckCircle, Clock, AlertCircle } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Search, Plus, Filter, Menu, Bell, LogOut, User as UserIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { TaskCard } from "@/components/TaskCard";
 import { CreateTaskModal } from "@/components/CreateTaskModal";
 import { StatsCard } from "@/components/StatsCard";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
+import type { User, Session } from "@supabase/supabase-js";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface Task {
   id: string;
@@ -15,236 +28,379 @@ interface Task {
   description: string;
   status: 'todo' | 'progress' | 'done';
   priority: 'low' | 'medium' | 'high' | 'urgent';
-  dueDate: string;
+  due_date: string;
   assignee: string;
   team: string;
 }
 
-const mockTasks: Task[] = [
-  {
-    id: '1',
-    title: 'Design new landing page',
-    description: 'Create mockups and wireframes for the new product landing page',
-    status: 'progress',
-    priority: 'high',
-    dueDate: '2024-07-25',
-    assignee: 'Alex Chen',
-    team: 'Design Team'
-  },
-  {
-    id: '2',
-    title: 'Implement user authentication',
-    description: 'Set up login/signup flow with email verification',
-    status: 'todo',
-    priority: 'urgent',
-    dueDate: '2024-07-22',
-    assignee: 'Sarah Johnson',
-    team: 'Development Team'
-  },
-  {
-    id: '3',
-    title: 'Write API documentation',
-    description: 'Document all endpoints for the REST API',
-    status: 'done',
-    priority: 'medium',
-    dueDate: '2024-07-20',
-    assignee: 'Mike Rodriguez',
-    team: 'Development Team'
-  },
-  {
-    id: '4',
-    title: 'User testing session',
-    description: 'Conduct usability testing with 10 target users',
-    status: 'todo',
-    priority: 'high',
-    dueDate: '2024-07-28',
-    assignee: 'Emma Wilson',
-    team: 'Product Team'
-  }
-];
-
-const Index = () => {
-  const [tasks, setTasks] = useState<Task[]>(mockTasks);
+export default function Index() {
+  const [user, setUser] = useState<User | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [priorityFilter, setPriorityFilter] = useState<string>("all");
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const { toast } = useToast();
+
+  useEffect(() => {
+    // Set up auth state listener
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        setSession(session);
+        setUser(session?.user ?? null);
+        if (session?.user) {
+          setTimeout(() => {
+            fetchTasks();
+          }, 0);
+        } else {
+          window.location.href = "/auth";
+        }
+      }
+    );
+
+    // Check for existing session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setUser(session?.user ?? null);
+      if (session?.user) {
+        fetchTasks();
+      } else {
+        window.location.href = "/auth";
+      }
+      setLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const fetchTasks = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      
+      const formattedTasks: Task[] = data?.map(task => ({
+        id: task.id,
+        title: task.title,
+        description: task.description || '',
+        status: task.status as 'todo' | 'progress' | 'done',
+        priority: task.priority as 'low' | 'medium' | 'high' | 'urgent',
+        due_date: task.due_date || new Date().toISOString(),
+        assignee: task.assignee,
+        team: task.team,
+      })) || [];
+      
+      setTasks(formattedTasks);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: "Failed to fetch tasks",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      window.location.href = "/auth";
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: "Failed to sign out",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleStatusChange = async (taskId: string, newStatus: 'todo' | 'progress' | 'done') => {
+    try {
+      const { error } = await supabase
+        .from('tasks')
+        .update({ status: newStatus })
+        .eq('id', taskId);
+
+      if (error) throw error;
+
+      setTasks(tasks.map(task => 
+        task.id === taskId ? { ...task, status: newStatus } : task
+      ));
+
+      toast({
+        title: "Success",
+        description: "Task status updated",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: "Failed to update task status",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDeleteTask = async (taskId: string) => {
+    try {
+      const { error } = await supabase
+        .from('tasks')
+        .delete()
+        .eq('id', taskId);
+
+      if (error) throw error;
+
+      setTasks(tasks.filter(task => task.id !== taskId));
+
+      toast({
+        title: "Success",
+        description: "Task deleted successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: "Failed to delete task",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleCreateTask = async (taskData: {
+    title: string;
+    description: string;
+    status: 'todo' | 'progress' | 'done';
+    priority: 'low' | 'medium' | 'high' | 'urgent';
+    dueDate: string;
+    assignee: string;
+    team: string;
+  }) => {
+    try {
+      const { data, error } = await supabase
+        .from('tasks')
+        .insert([{
+          title: taskData.title,
+          description: taskData.description,
+          status: taskData.status,
+          priority: taskData.priority,
+          due_date: taskData.dueDate,
+          assignee: taskData.assignee,
+          team: taskData.team,
+          created_by: user?.id,
+        }])
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      if (data) {
+        const newTask: Task = {
+          id: data.id,
+          title: data.title,
+          description: data.description || '',
+          status: data.status as 'todo' | 'progress' | 'done',
+          priority: data.priority as 'low' | 'medium' | 'high' | 'urgent',
+          due_date: data.due_date,
+          assignee: data.assignee,
+          team: data.team,
+        };
+        setTasks([newTask, ...tasks]);
+        toast({
+          title: "Success",
+          description: "Task created successfully",
+        });
+      }
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: "Failed to create task",
+        variant: "destructive",
+      });
+    }
+  };
 
   const filteredTasks = tasks.filter(task => {
     const matchesSearch = task.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          task.description.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === "all" || task.status === statusFilter;
-    return matchesSearch && matchesStatus;
+    const matchesPriority = priorityFilter === "all" || task.priority === priorityFilter;
+    
+    return matchesSearch && matchesStatus && matchesPriority;
   });
 
-  const handleCreateTask = (newTask: Omit<Task, 'id'>) => {
-    const task: Task = {
-      ...newTask,
-      id: Math.random().toString(36).substr(2, 9)
-    };
-    setTasks([...tasks, task]);
-    setIsCreateModalOpen(false);
-  };
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-background via-background to-accent/5 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+          <p className="mt-2 text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
-  const handleStatusChange = (taskId: string, newStatus: Task['status']) => {
-    setTasks(tasks.map(task => 
-      task.id === taskId ? { ...task, status: newStatus } : task
-    ));
-  };
+  const todoTasks = filteredTasks.filter(task => task.status === "todo");
+  const progressTasks = filteredTasks.filter(task => task.status === "progress");
+  const doneTasks = filteredTasks.filter(task => task.status === "done");
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b border-border bg-gradient-card backdrop-blur-xl">
-        <div className="container mx-auto px-6 py-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <div className="bg-gradient-primary p-3 rounded-xl shadow-elegant">
-                <CheckCircle className="h-8 w-8 text-primary-foreground" />
-              </div>
-              <div>
-                <h1 className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">
-                  TaskForge
-                </h1>
-                <p className="text-muted-foreground">Forge your productivity</p>
-              </div>
-            </div>
-            
-            <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
-              <DialogTrigger asChild>
-                <Button className="bg-gradient-primary hover:opacity-90 shadow-elegant">
-                  <Plus className="mr-2 h-4 w-4" />
-                  Create Task
+    <div className="min-h-screen bg-gradient-to-br from-background via-background to-accent/5">
+      <div className="container mx-auto px-4 py-8 max-w-7xl">
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">
+              TaskForge
+            </h1>
+            <p className="text-muted-foreground mt-1">Welcome back, {user?.email}</p>
+          </div>
+          
+          <div className="flex items-center space-x-4">
+            <Button variant="ghost" size="icon">
+              <Bell className="h-5 w-5" />
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon">
+                  <UserIcon className="h-5 w-5" />
                 </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Create New Task</DialogTitle>
-                </DialogHeader>
-                <CreateTaskModal onCreateTask={handleCreateTask} />
-              </DialogContent>
-            </Dialog>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem disabled>
+                  <UserIcon className="mr-2 h-4 w-4" />
+                  {user?.email}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleSignOut}>
+                  <LogOut className="mr-2 h-4 w-4" />
+                  Sign Out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
-      </header>
 
-      <main className="container mx-auto px-6 py-8">
-        {/* Stats Overview */}
+        {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           <StatsCard
             title="Total Tasks"
-            value={tasks.length.toString()}
-            icon={<Calendar className="h-5 w-5" />}
-            trend="+12%"
-            className="animate-fade-in"
+            value={filteredTasks.length}
+            description="Active tasks"
+            trend={{ value: 12, isPositive: true }}
+          />
+          <StatsCard
+            title="To Do"
+            value={todoTasks.length}
+            description="Pending tasks"
+            trend={{ value: 5, isPositive: false }}
           />
           <StatsCard
             title="In Progress"
-            value={tasks.filter(t => t.status === 'progress').length.toString()}
-            icon={<Clock className="h-5 w-5 text-status-progress" />}
-            trend="+5%"
-            className="animate-fade-in [animation-delay:100ms]"
+            value={progressTasks.length}
+            description="Active work"
+            trend={{ value: 8, isPositive: true }}
           />
           <StatsCard
             title="Completed"
-            value={tasks.filter(t => t.status === 'done').length.toString()}
-            icon={<CheckCircle className="h-5 w-5 text-status-done" />}
-            trend="+8%"
-            className="animate-fade-in [animation-delay:200ms]"
-          />
-          <StatsCard
-            title="Team Members"
-            value="12"
-            icon={<Users className="h-5 w-5 text-accent" />}
-            trend="+2"
-            className="animate-fade-in [animation-delay:300ms]"
+            value={doneTasks.length}
+            description="Finished tasks"
+            trend={{ value: 15, isPositive: true }}
           />
         </div>
 
-        {/* Filters and Search */}
-        <Card className="mb-8 bg-gradient-card shadow-card border-border/50">
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              <span>Task Management</span>
-              <div className="flex items-center space-x-2">
-                <Badge variant="outline" className="border-status-todo text-status-todo">
-                  {tasks.filter(t => t.status === 'todo').length} To Do
-                </Badge>
-                <Badge variant="outline" className="border-status-progress text-status-progress">
-                  {tasks.filter(t => t.status === 'progress').length} In Progress
-                </Badge>
-                <Badge variant="outline" className="border-status-done text-status-done">
-                  {tasks.filter(t => t.status === 'done').length} Done
-                </Badge>
-              </div>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col sm:flex-row gap-4 mb-6">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search tasks..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10 bg-background/50 border-border/50"
-                />
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  variant={statusFilter === "all" ? "default" : "outline"}
-                  onClick={() => setStatusFilter("all")}
-                  className="whitespace-nowrap"
-                >
-                  All
+        {/* Search and Filters */}
+        <div className="flex flex-col sm:flex-row gap-4 mb-8">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+            <Input
+              placeholder="Search tasks..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-10 bg-background/50 border-border/50"
+            />
+          </div>
+          
+          <div className="flex gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="bg-background/50 border-border/50">
+                  <Filter className="mr-2 h-4 w-4" />
+                  Status: {statusFilter === "all" ? "All" : statusFilter}
                 </Button>
-                <Button
-                  variant={statusFilter === "todo" ? "default" : "outline"}
-                  onClick={() => setStatusFilter("todo")}
-                  className="whitespace-nowrap"
-                >
-                  To Do
-                </Button>
-                <Button
-                  variant={statusFilter === "progress" ? "default" : "outline"}
-                  onClick={() => setStatusFilter("progress")}
-                  className="whitespace-nowrap"
-                >
-                  In Progress
-                </Button>
-                <Button
-                  variant={statusFilter === "done" ? "default" : "outline"}
-                  onClick={() => setStatusFilter("done")}
-                  className="whitespace-nowrap"
-                >
-                  Done
-                </Button>
-              </div>
-            </div>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="bg-card border-border shadow-elegant">
+                <DropdownMenuItem onClick={() => setStatusFilter("all")}>All</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setStatusFilter("todo")}>To Do</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setStatusFilter("progress")}>In Progress</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setStatusFilter("done")}>Done</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
-            {/* Task List */}
-            <div className="space-y-4">
-              {filteredTasks.length === 0 ? (
-                <div className="text-center py-12">
-                  <AlertCircle className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold text-muted-foreground">No tasks found</h3>
-                  <p className="text-muted-foreground">Try adjusting your search or filters</p>
-                </div>
-              ) : (
-                filteredTasks.map((task, index) => (
-                  <TaskCard
-                    key={task.id}
-                    task={task}
-                    onStatusChange={handleStatusChange}
-                    className={`animate-slide-up [animation-delay:${index * 50}ms]`}
-                  />
-                ))
-              )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="bg-background/50 border-border/50">
+                  <Filter className="mr-2 h-4 w-4" />
+                  Priority: {priorityFilter === "all" ? "All" : priorityFilter}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="bg-card border-border shadow-elegant">
+                <DropdownMenuItem onClick={() => setPriorityFilter("all")}>All</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setPriorityFilter("low")}>Low</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setPriorityFilter("medium")}>Medium</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setPriorityFilter("high")}>High</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setPriorityFilter("urgent")}>Urgent</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <Button 
+              onClick={() => setIsCreateModalOpen(true)}
+              className="bg-gradient-primary hover:opacity-90 shadow-elegant"
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              New Task
+            </Button>
+          </div>
+        </div>
+
+        {/* Tasks Grid */}
+        <div className="space-y-4">
+          {filteredTasks.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-muted-foreground text-lg">No tasks found</p>
+              <p className="text-muted-foreground text-sm mt-2">Create your first task to get started</p>
             </div>
-          </CardContent>
-        </Card>
-      </main>
+          ) : (
+            filteredTasks.map((task) => (
+              <TaskCard
+                key={task.id}
+                task={{
+                  ...task,
+                  dueDate: task.due_date,
+                }}
+                onStatusChange={handleStatusChange}
+                onDeleteTask={handleDeleteTask}
+              />
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* Create Task Modal */}
+      <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
+        <DialogContent className="sm:max-w-[500px] bg-card border-border shadow-elegant">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-semibold">Create New Task</DialogTitle>
+          </DialogHeader>
+          <CreateTaskModal 
+            onCreateTask={(taskData) => {
+              handleCreateTask(taskData);
+              setIsCreateModalOpen(false);
+            }}
+          />
+        </DialogContent>
+      </Dialog>
     </div>
   );
-};
-
-export default Index;
+}
