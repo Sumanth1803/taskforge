@@ -1,10 +1,12 @@
 import { useState, useEffect } from "react";
-import { Search, Plus, Filter, Menu, Bell, LogOut, User as UserIcon } from "lucide-react";
+import { Search, Plus, Filter, Menu, Bell, LogOut, User as UserIcon, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TaskCard } from "@/components/TaskCard";
 import { CreateTaskModal } from "@/components/CreateTaskModal";
 import { StatsCard } from "@/components/StatsCard";
+import { TeamCard } from "@/components/TeamCard";
+import { TeamDetailsModal } from "@/components/TeamDetailsModal";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import type { User, Session } from "@supabase/supabase-js";
@@ -21,6 +23,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface Task {
   id: string;
@@ -41,6 +44,7 @@ export default function Index() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [priorityFilter, setPriorityFilter] = useState<string>("all");
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [selectedTeamModal, setSelectedTeamModal] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
@@ -246,6 +250,27 @@ export default function Index() {
   const progressTasks = filteredTasks.filter(task => task.status === "progress");
   const doneTasks = filteredTasks.filter(task => task.status === "done");
 
+  // Group tasks by team
+  const teamGroups = tasks.reduce((acc, task) => {
+    const teamName = task.team || 'Personal';
+    if (!acc[teamName]) {
+      acc[teamName] = [];
+    }
+    acc[teamName].push(task);
+    return acc;
+  }, {} as Record<string, Task[]>);
+
+  const teamStats = Object.entries(teamGroups).map(([teamName, teamTasks]) => ({
+    teamName,
+    totalTasks: teamTasks.length,
+    todoTasks: teamTasks.filter(task => task.status === 'todo').length,
+    progressTasks: teamTasks.filter(task => task.status === 'progress').length,
+    doneTasks: teamTasks.filter(task => task.status === 'done').length,
+    creators: [...new Set(teamTasks.map(task => task.assignee))].filter(Boolean),
+  }));
+
+  const selectedTeamTasks = selectedTeamModal ? (teamGroups[selectedTeamModal] || []) : [];
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-accent/5">
       <div className="container mx-auto px-4 py-8 max-w-7xl">
@@ -364,27 +389,59 @@ export default function Index() {
           </div>
         </div>
 
-        {/* Tasks Grid */}
-        <div className="space-y-4">
-          {filteredTasks.length === 0 ? (
-            <div className="text-center py-12">
-              <p className="text-muted-foreground text-lg">No tasks found</p>
-              <p className="text-muted-foreground text-sm mt-2">Create your first task to get started</p>
-            </div>
-          ) : (
-            filteredTasks.map((task) => (
-              <TaskCard
-                key={task.id}
-                task={{
-                  ...task,
-                  dueDate: task.due_date,
-                }}
-                onStatusChange={handleStatusChange}
-                onDeleteTask={handleDeleteTask}
-              />
-            ))
-          )}
-        </div>
+        {/* Main Content Tabs */}
+        <Tabs defaultValue="tasks" className="space-y-6">
+          <TabsList className="grid w-full grid-cols-2 bg-card border-border">
+            <TabsTrigger value="tasks" className="flex items-center gap-2">
+              <Search className="h-4 w-4" />
+              All Tasks
+            </TabsTrigger>
+            <TabsTrigger value="teams" className="flex items-center gap-2">
+              <Users className="h-4 w-4" />
+              Teams
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="tasks" className="space-y-4">
+            {filteredTasks.length === 0 ? (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground text-lg">No tasks found</p>
+                <p className="text-muted-foreground text-sm mt-2">Create your first task to get started</p>
+              </div>
+            ) : (
+              filteredTasks.map((task) => (
+                <TaskCard
+                  key={task.id}
+                  task={{
+                    ...task,
+                    dueDate: task.due_date,
+                  }}
+                  onStatusChange={handleStatusChange}
+                  onDeleteTask={handleDeleteTask}
+                />
+              ))
+            )}
+          </TabsContent>
+
+          <TabsContent value="teams" className="space-y-4">
+            {teamStats.length === 0 ? (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground text-lg">No teams found</p>
+                <p className="text-muted-foreground text-sm mt-2">Create tasks with team names to see teams here</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {teamStats.map((team) => (
+                  <TeamCard
+                    key={team.teamName}
+                    teamStats={team}
+                    onClick={() => setSelectedTeamModal(team.teamName)}
+                  />
+                ))}
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
       </div>
 
       {/* Create Task Modal */}
@@ -401,6 +458,16 @@ export default function Index() {
           />
         </DialogContent>
       </Dialog>
+
+      {/* Team Details Modal */}
+      <TeamDetailsModal
+        isOpen={!!selectedTeamModal}
+        onClose={() => setSelectedTeamModal(null)}
+        teamName={selectedTeamModal || ''}
+        tasks={selectedTeamTasks}
+        onStatusChange={handleStatusChange}
+        onDeleteTask={handleDeleteTask}
+      />
     </div>
   );
 }
